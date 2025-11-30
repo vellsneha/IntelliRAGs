@@ -279,7 +279,7 @@ class DocumentProcessor:
             "doc_id": doc_id,
             "num_chunks": len(chunks)
         }
-        # Add any additional metadata provided by user
+        # Add any additional metadata provided by user (including chat_id if provided)
         if metadata:
             base_metadata.update(metadata)
         

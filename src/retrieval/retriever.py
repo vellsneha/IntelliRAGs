@@ -16,7 +16,7 @@ RAG solves the problem of LLMs not knowing your specific data by:
 
 import cohere
 import chromadb
-from typing import List, Dict
+from typing import List, Dict, Optional
 import os
 from dotenv import load_dotenv
 
@@ -72,14 +72,16 @@ class Retriever:
                 f"Error: {e}"
             )
     
-    def retrieve(self, query: str, top_k: int = 5) -> List[Dict]:
+    def retrieve(self, query: str, top_k: int = 5, chat_id: Optional[str] = None, 
+                 allowed_doc_ids: Optional[List[str]] = None) -> List[Dict]:
         """
         Retrieve most relevant document chunks using semantic search.
         
         How it works:
         1. Convert query to embedding (vector)
         2. Search ChromaDB for similar embeddings
-        3. Return top_k most similar chunks
+        3. Filter by chat_id or allowed document IDs if provided
+        4. Return top_k most similar chunks
         
         Similarity is measured using cosine distance:
         - 0.0 = identical
@@ -90,6 +92,8 @@ class Retriever:
             top_k: Number of chunks to retrieve (default: 5)
                   More chunks = more context but slower
                   Fewer chunks = faster but might miss info
+            chat_id: Optional chat ID to filter documents (filter by chat_id in metadata)
+            allowed_doc_ids: Optional list of document IDs to filter by
             
         Returns:
             List of dictionaries, each containing:
@@ -116,11 +120,23 @@ class Retriever:
             input_type='search_query'  # Different from 'search_document'!
         ).embeddings[0]  # Extract first (and only) embedding
         
-        # Step 2: Query ChromaDB for similar vectors
-        results = self.collection.query(
-            query_embeddings=[query_embedding],  # List of query vectors
-            n_results=top_k  # How many results to return
-        )
+        # Step 2: Build where clause for filtering
+        where_clause = None
+        if chat_id:
+            where_clause = {"chat_id": chat_id}
+        # Note: allowed_doc_ids filtering is done after query (post-filter)
+        # ChromaDB where clause is simpler for chat_id filtering
+        
+        # Step 3: Query ChromaDB for similar vectors (with optional filtering)
+        query_params = {
+            "query_embeddings": [query_embedding],  # List of query vectors
+            "n_results": top_k * 3 if where_clause else top_k  # Get more if filtering
+        }
+        
+        if where_clause:
+            query_params["where"] = where_clause
+        
+        results = self.collection.query(**query_params)
         
         # Step 3: Format results into clean list of dictionaries
         # ChromaDB returns nested lists, we flatten for easier use
@@ -134,14 +150,21 @@ class Retriever:
             return retrieved_docs  # No results found
         
         for i in range(len(ids[0])):
+            doc_metadata = metadatas[0][i] if metadatas and metadatas[0] else {}
+            
+            # Additional filtering by allowed_doc_ids if needed (post-filter)
+            if allowed_doc_ids and doc_metadata.get('doc_id') not in allowed_doc_ids:
+                continue
+            
             retrieved_docs.append({
                 "id": ids[0][i],
                 "text": documents[0][i] if documents and documents[0] else "",
-                "metadata": metadatas[0][i] if metadatas and metadatas[0] else {},
+                "metadata": doc_metadata,
                 "distance": distances[0][i] if distances and distances[0] else 0.0
             })
         
-        return retrieved_docs
+        # Limit to top_k after filtering
+        return retrieved_docs[:top_k]
     
     def generate_answer(self, query: str, context_docs: List[Dict]) -> Dict:
         """
@@ -229,7 +252,8 @@ Answer:"""
             "context_used": len(context_docs)  # How many chunks we used
         }
     
-    def answer_question(self, query: str) -> Dict:
+    def answer_question(self, query: str, chat_id: Optional[str] = None,
+                       allowed_doc_ids: Optional[List[str]] = None) -> Dict:
         """
         Complete RAG pipeline - this is the main method!
         
@@ -243,6 +267,8 @@ Answer:"""
         
         Args:
             query: User's natural language question
+            chat_id: Optional chat ID to filter documents
+            allowed_doc_ids: Optional list of document IDs to filter by
             
         Returns:
             Dictionary containing:
@@ -271,7 +297,7 @@ Answer:"""
         
         # Step 1: Retrieve relevant documents using semantic search
         # top_k=5 is a good default (adjust based on your needs)
-        docs = self.retrieve(query, top_k=5)
+        docs = self.retrieve(query, top_k=5, chat_id=chat_id, allowed_doc_ids=allowed_doc_ids)
         
         # Step 2: Generate answer using retrieved docs
         result = self.generate_answer(query, docs)

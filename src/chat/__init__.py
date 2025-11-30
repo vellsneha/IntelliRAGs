@@ -1,0 +1,2 @@
+# Chat management module
+
