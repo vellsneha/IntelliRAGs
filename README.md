@@ -2,17 +2,6 @@
 
 A production-ready **Retrieval-Augmented Generation (RAG)** system that enables intelligent document Q&A through semantic search and AI-powered answer generation. Built with FastAPI backend and Streamlit dashboard.
 
-## What is RAG?
-
-**Retrieval-Augmented Generation (RAG)** solves the problem of AI models not knowing your specific data by:
-
-1. **Retrieving**: Finding relevant information from your documents using semantic search
-2. **Augmenting**: Adding that retrieved context to the AI prompt
-3. **Generating**: Creating accurate, contextual answers based on your actual documents
-
-Instead of relying on pre-trained knowledge, RAG uses **your documents** as the source of truth.
-
----
 
 ## Features
 
