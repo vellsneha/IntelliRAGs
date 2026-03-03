@@ -304,38 +304,6 @@ pip install pandas>=2.2.0
 
 ---
 
-## Deployment
-
-### Production Considerations
-
-1. **Change Default Secrets**
-   - Update `SECRET_KEY` in `.env`
-   - Use strong, random secret keys
-
-2. **Environment Variables**
-   - Use a secrets manager (AWS Secrets Manager, Azure Key Vault, etc.)
-   - Never commit `.env` files
-
-3. **Database**
-   - Consider migrating SQLite to PostgreSQL for production
-   - Use managed ChromaDB or PostgreSQL with pgvector
-
-4. **API Server**
-   - Use production ASGI server (Gunicorn + Uvicorn workers)
-   - Set up reverse proxy (Nginx)
-   - Enable HTTPS/SSL
-
-5. **Monitoring**
-   - Set up logging (structured logs)
-   - Add monitoring (Prometheus, Grafana)
-   - Configure alerts
-
-6. **Rate Limiting**
-   - Implement rate limiting on API endpoints
-   - Add request throttling
-
----
-
 ### Key Concepts
 
 - **Embeddings**: Numerical vectors representing text meaning (768 dimensions)
