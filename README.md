@@ -2,7 +2,7 @@
 
 A production-ready **Retrieval-Augmented Generation (RAG)** system that enables intelligent document Q&A through semantic search and AI-powered answer generation. Built with FastAPI backend and Streamlit dashboard.
 
-## 🎯 What is RAG?
+## What is RAG?
 
 **Retrieval-Augmented Generation (RAG)** solves the problem of AI models not knowing your specific data by:
 
@@ -14,32 +14,32 @@ Instead of relying on pre-trained knowledge, RAG uses **your documents** as the 
 
 ---
 
-## ✨ Features
+## Features
 
 ### Core Capabilities
-- 📄 **Multi-format Document Support**: Upload PDF, DOCX, and TXT files
-- 🔍 **Semantic Search**: Find relevant document chunks using vector embeddings
-- 💬 **Intelligent Q&A**: Get answers grounded in your uploaded documents
-- 🔐 **JWT Authentication**: Secure API access with token-based authentication
-- 📊 **Analytics Dashboard**: Track queries, performance, and user behavior
-- 🛡️ **Safety Guardrails**: Protection against prompt injection, PII leakage, and malicious inputs
+- **Multi-format Document Support**: Upload PDF, DOCX, and TXT files
+- **Semantic Search**: Find relevant document chunks using vector embeddings
+- **Intelligent Q&A**: Get answers grounded in your uploaded documents
+- **JWT Authentication**: Secure API access with token-based authentication
+- **Analytics Dashboard**: Track queries, performance, and user behavior
+- **Safety Guardrails**: Protection against prompt injection, PII leakage, and malicious inputs
 
 ### User Interface
-- 🎨 **Modern Streamlit Dashboard**: Beautiful, intuitive web interface
-- 📤 **Drag-and-drop Upload**: Easy document ingestion
-- 💬 **Interactive Q&A**: Real-time question answering
-- 📈 **Statistics Page**: Comprehensive analytics and visualizations
-- ✅ **Feedback System**: Rate answers to improve the system
+- **Modern Streamlit Dashboard**: Beautiful, intuitive web interface
+- **Drag-and-drop Upload**: Easy document ingestion
+- **Interactive Q&A**: Real-time question answering
+- **Statistics Page**: Comprehensive analytics and visualizations
+- **Feedback System**: Rate answers to improve the system
 
 ### Enterprise Features
-- 🔒 **Security First**: JWT tokens, input validation, safety checks
-- 📈 **Analytics Tracking**: SQLite-based analytics with performance metrics
-- 🚀 **RESTful API**: Fully documented FastAPI endpoints
-- 🔄 **State Management**: Persistent vector database (ChromaDB)
+- **Security First**: JWT tokens, input validation, safety checks
+- **Analytics Tracking**: SQLite-based analytics with performance metrics
+- **RESTful API**: Fully documented FastAPI endpoints
+- **State Management**: Persistent vector database (ChromaDB)
 
 ---
 
-## 🏗️ Architecture
+## Architecture
 
 ```
 ┌─────────────────┐
@@ -82,7 +82,7 @@ Instead of relying on pre-trained knowledge, RAG uses **your documents** as the 
 
 ---
 
-## 🛠️ Tech Stack
+## Tech Stack
 
 ### Backend
 - **FastAPI** - Modern, fast Python web framework
@@ -114,7 +114,7 @@ Instead of relying on pre-trained knowledge, RAG uses **your documents** as the 
 
 ---
 
-## 📦 Installation
+## Installation
 
 ### Prerequisites
 
@@ -169,7 +169,7 @@ Instead of relying on pre-trained knowledge, RAG uses **your documents** as the 
 
 ---
 
-## 🚀 Quick Start
+## Quick Start
 
 ### 1. Start the FastAPI Server
 
@@ -208,7 +208,7 @@ The dashboard will open at: `http://localhost:8501`
 
 ---
 
-## 📖 Usage Guide
+## Usage Guide
 
 ### Using the Dashboard
 
@@ -228,7 +228,7 @@ The dashboard will open at: `http://localhost:8501`
    - Type your question in the text area
    - Click "Ask Question"
    - View the answer with source citations
-   - Provide feedback (👍/👎) to improve the system
+   - Provide feedback to improve the system
 
 #### Statistics Page (`pages/2_Statistics.py`)
 - View system overview metrics
@@ -311,7 +311,7 @@ See full API documentation at: `http://localhost:8000/docs`
 
 ---
 
-## 📁 Project Structure
+## Project Structure
 
 ```
 enterprise-rag-system/
@@ -343,7 +343,7 @@ enterprise-rag-system/
 
 ---
 
-## 🔒 Security Features
+## Security Features
 
 ### Authentication & Authorization
 - **JWT Tokens**: Secure token-based authentication
@@ -368,11 +368,11 @@ enterprise-rag-system/
 - Secure password storage
 - Input/output validation
 
-**⚠️ Important**: Change the default `SECRET_KEY` in production!
+**Important**: Change the default `SECRET_KEY` in production!
 
 ---
 
-## 📊 Analytics & Monitoring
+## Analytics & Monitoring
 
 The system tracks comprehensive analytics:
 
@@ -409,7 +409,7 @@ response = requests.get(
 
 ---
 
-## 🧪 Testing
+## Testing
 
 ### Run Tests
 
@@ -453,7 +453,7 @@ pytest -v
 
 ---
 
-## 🔧 Configuration
+## Configuration
 
 ### Environment Variables
 
@@ -484,7 +484,7 @@ rm analytics.db
 
 ---
 
-## 🐛 Troubleshooting
+## Troubleshooting
 
 ### Common Issues
 
@@ -532,7 +532,7 @@ pip install pandas>=2.2.0
 
 ---
 
-## 🚀 Deployment
+## Deployment
 
 ### Production Considerations
 
@@ -579,7 +579,7 @@ gunicorn src.api.main:app -w 4 -k uvicorn.workers.UvicornWorker
 
 ---
 
-## 📚 How RAG Works
+## How RAG Works
 
 ### Step-by-Step Process
 
@@ -610,7 +610,7 @@ gunicorn src.api.main:app -w 4 -k uvicorn.workers.UvicornWorker
 
 ---
 
-## 🎓 Learning Resources
+## Learning Resources
 
 ### RAG Concepts
 - [Retrieval-Augmented Generation Explained](https://www.pinecone.io/learn/retrieval-augmented-generation/)
@@ -624,7 +624,7 @@ gunicorn src.api.main:app -w 4 -k uvicorn.workers.UvicornWorker
 
 ---
 
-## 🤝 Contributing
+## Contributing
 
 Contributions are welcome! Please follow these steps:
 
@@ -643,13 +643,9 @@ Contributions are welcome! Please follow these steps:
 
 ---
 
-## 📄 License
 
-This project is licensed under the MIT License - see the LICENSE file for details.
 
----
-
-## 🙏 Acknowledgments
+## Acknowledgments
 
 - **Cohere** - For embeddings and LLM capabilities
 - **ChromaDB** - For vector database functionality
@@ -658,34 +654,4 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 
 ---
 
-## 📧 Support
-
-For issues, questions, or suggestions:
-
-1. Check the [Troubleshooting](#-troubleshooting) section
-2. Search existing issues
-3. Create a new issue with:
-   - Error messages
-   - Steps to reproduce
-   - Environment details (OS, Python version)
-
----
-
-## 🎯 Roadmap
-
-Future enhancements:
-
-- [ ] Multi-language support
-- [ ] Advanced chunking strategies (sentence-aware, semantic chunking)
-- [ ] PDF table extraction
-- [ ] Image/document OCR support
-- [ ] Real-time collaborative editing
-- [ ] Export analytics reports
-- [ ] Advanced security features (2FA, SSO)
-- [ ] Docker containerization
-- [ ] Kubernetes deployment guides
-
----
-
-**Built with ❤️ for intelligent document Q&A**
 
