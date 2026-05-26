@@ -40,35 +40,31 @@ class Retriever:
                     └──────────┘
     """
     
-    def __init__(self):
+    def __init__(self, collection_name: str = "documents"):
         """
         Initialize retriever with necessary clients.
-        
-        Establishes connections to:
-        1. Cohere API - for embeddings and text generation
-        2. ChromaDB - for vector storage and similarity search
-        
+
+        Args:
+            collection_name: ChromaDB collection to read from. Default
+                "documents" matches production; pass "ragbench" (or another
+                eval-specific name) to evaluate against an isolated corpus.
+
         Raises:
-            Exception: If ChromaDB collection doesn't exist (no documents ingested)
+            Exception: If the named collection doesn't exist (nothing ingested).
         """
-        # Initialize Cohere client for API calls
         cohere_api_key = os.getenv("COHERE_API_KEY")
         if not cohere_api_key:
             raise ValueError("COHERE_API_KEY environment variable is not set")
         self.co = cohere.Client(cohere_api_key)
-        
-        # Connect to persistent ChromaDB instance
+
         self.chroma_client = chromadb.PersistentClient(path="./chroma_db")
-        
-        # Get the documents collection
-        # Note: Using get_collection (not get_or_create) because collection
-        # should already exist from document ingestion
+
         try:
-            self.collection = self.chroma_client.get_collection(name="documents")
+            self.collection = self.chroma_client.get_collection(name=collection_name)
         except Exception as e:
             raise Exception(
-                "Documents collection not found! "
-                "Please ingest documents first using DocumentProcessor. "
+                f"Collection '{collection_name}' not found. "
+                "Ingest documents into it first using DocumentProcessor. "
                 f"Error: {e}"
             )
     

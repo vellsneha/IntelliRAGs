@@ -263,6 +263,89 @@ with col_right:
         st.info("📋 No events logged yet")
     st.markdown('</div>', unsafe_allow_html=True)
 
+# ═══════════════════════════════════════════════════════════
+# Section 3: Eval Pipeline Trends
+# ═══════════════════════════════════════════════════════════
+
+st.markdown('<div class="section-card">', unsafe_allow_html=True)
+st.subheader("🧪 Evaluation Runs")
+
+try:
+    eval_history = tracker.get_eval_history(limit=200)
+except Exception as e:
+    eval_history = []
+    st.warning(f"Could not load eval_runs: {e}")
+
+if not eval_history:
+    st.info(
+        "📭 No benchmark runs yet. Generate a benchmark and run the eval pipeline:\n\n"
+        "```bash\n"
+        "python eval/synthesize.py --n 50\n"
+        "# hand-review eval/benchmark.jsonl\n"
+        "python eval/run.py --tag baseline\n"
+        "```"
+    )
+else:
+    flat = []
+    for r in eval_history:
+        row = {
+            "id": r["id"],
+            "timestamp": r["timestamp"],
+            "tag": r["tag"] or "untagged",
+            "git_sha": r["git_sha"] or "",
+            "num_queries": r["num_queries"],
+        }
+        row.update(r["metrics"])
+        flat.append(row)
+    df_eval = pd.DataFrame(flat)
+
+    metric_cols = [
+        c for c in df_eval.columns
+        if c not in {"id", "timestamp", "tag", "git_sha", "num_queries",
+                     "wall_seconds", "retrieval_latency_s", "gen_latency_s"}
+    ]
+
+    default_metrics = [m for m in
+                       ["hit_at_1", "recall_at_5", "mrr", "faithfulness", "correctness"]
+                       if m in metric_cols]
+    chosen = st.multiselect(
+        "Metrics to plot",
+        options=metric_cols,
+        default=default_metrics or metric_cols[:3],
+    )
+
+    if chosen:
+        plot_df = df_eval.melt(
+            id_vars=["timestamp", "tag", "id"],
+            value_vars=chosen,
+            var_name="metric",
+            value_name="value",
+        )
+        fig = px.line(
+            plot_df, x="timestamp", y="value", color="metric",
+            line_dash="tag", markers=True,
+            title="Eval metrics over time",
+            hover_data=["id", "tag"],
+        )
+        fig.update_layout(
+            xaxis_title="Run timestamp",
+            yaxis_title="Metric value",
+            hovermode="x unified",
+            plot_bgcolor="rgba(0,0,0,0)",
+            paper_bgcolor="rgba(0,0,0,0)",
+        )
+        st.plotly_chart(fig, use_container_width=True)
+
+    st.markdown("**Run history**")
+    display_cols = ["id", "timestamp", "tag", "git_sha", "num_queries"] + chosen
+    st.dataframe(
+        df_eval[display_cols].sort_values("timestamp", ascending=False),
+        use_container_width=True,
+        hide_index=True,
+    )
+
+st.markdown('</div>', unsafe_allow_html=True)
+
 # Footer
 st.markdown("---")
 st.caption(f"🕐 Last updated: {summary.get('generated_at', 'N/A')}")

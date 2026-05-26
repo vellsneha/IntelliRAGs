@@ -1,0 +1,574 @@
+
+╭─── Claude Code v2.1.150 ────────────────────────────────────────────────────────────────────────────────────────────────╮
+│                                                    │ Tips for getting started                                           │
+│                  Welcome back vel!                 │ Run /init to create a CLAUDE.md file with instructions for Claude  │
+│                                                    │ ────────────────────────────────────────────────────────────────── │
+│                       ▐▛███▜▌                      │ What's new                                                         │
+│                      ▝▜█████▛▘                     │ Internal infrastructure improvements (no user-facing changes)      │
+│                        ▘▘ ▝▝                       │ `/usage` now shows a per-category breakdown of what's driving you… │
+│                                                    │ `/diff` detail view can now be scrolled with the keyboard (arrows… │
+│   Opus 4.7 (1M context) · API Usage Billing · vel  │ /release-notes for more                                            │
+│          ~/Documents/Projects/IntelliRAGs          │                                                                    │
+╰─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+
+❯ i want to implement these steps ,
+    # 1. Make sure docs are ingested into chroma_db/
+    # 2. Generate a draft benchmark
+    python eval/synthesize.py --n 100 --out eval/benchmark.jsonl
+
+    # 3. HAND-REVIEW eval/benchmark.jsonl — delete junk rows, fix answers,
+    #    add multi-chunk gold_chunk_ids where a question spans chunks.
+
+    # 4. Run the baseline
+    python eval/run.py --tag baseline --notes "initial chunk_size=500 overlap=50"
+
+    # 5. Change something (chunk size, top_k, rerank, prompt) and re-run
+    python eval/run.py --tag chunk-300 --notes "smaller chunks"
+
+    # 6. Open Statistics page → "Evaluation Runs" → compare lines, but give me step by step guidance on how to do it (as expected by real world industry practice), i want to learn through the process
+
+I'll start by exploring the current project structure so my guidance matches what you actually have.
+
+  Searched for 1 pattern, read 6 files, listed 2 directories
+
+Good, I have enough context. Now let me set up a task list to track your progress through the pipeline, then give you the
+ industry-style walkthrough.
+
+Here is the full walkthrough. The code is alrze.py, eval/run.py, eval/judge.py,eval/metrics.py, the eval_runs SQLite table, and the Statistics page section. The goal of this guide is to teach you why
+each step exists and what to look at at each progress / completed in your head as you go (or tell me when to update them).
+
+---
+The mental model first
+
+Before any commands: in industry, RAG evaluat feedback loop with four layers:
+
+1. Corpus — the documents in your vector store.
+2. Benchmark — a fixed (query, gold_answer, gold_chunk_ids) dataset. Frozen across runs so changes in metrics are
+attributable to your system, not the data.
+3. System under test — the retriever + generator + prompt + reranker + chunking config. This is what you change.
+4. Metrics & logger — retrieval metrics (Hit@rom answer-quality metrics (faithfulness,correctness via LLM-judge), all logged with a git_sha + config + tag.
+
+The cardinal rule: change one thing per run. If you change chunk size and top_k simultaneously, you cannot attribute the
+delta.
+
+---
+Step 1 — Verify the corpus is ingested
+
+python -c "import chromadb; c = chromadb.PersistentClient(path='chroma_db').get_collection('documents'); print('chunks:',
+ c.count())"
+
+What to look for:
+- A non-zero count. If it's 0, ingest first via your dashboard upload flow or src/ingestion/document_processor.py.
+- A count consistent with what you've uploadecs and see 800 chunks, your chunker is tooaggressive — fix that before benchmarking, because the benchmark will be built on top of it.
+
+Industry note: the corpus is a versioned artifact. Production teams snapshot the corpus + embedding model + chunker
+config together (sometimes called a "retrievaerated against bundle v3 isn't accidentallyevaluated against bundle v5. For this project, the git_sha recorded in eval_runs is your stand-in.
+
+---
+Step 2 — Generate the draft benchmark
+
+python eval/synthesize.py --n 100 --out eval/
+
+What's happening internally (read eval/synthey chunk out of Chroma, shuffles with seed=42(reproducible), takes the first n, then asks Cohere command-r7b-12-2024 to produce one {question, answer} pair per chunk.
+ The chunk's ID becomes gold_chunk_ids[0].
+
+Expected output: eval/benchmark.jsonl with ~1
+{"query":"...","gold_answer":"...","gold_chunk_ids":["abc123"],"source":"sample.txt","synthesized":true}
+
+What can go wrong (and what real teams watch for):
+- Trivial questions ("What does this passage was lazy. Delete in step 3.
+- Leaked answers (the gold_answer is essentially the chunk verbatim) — too easy, inflates metrics.
+- Generic distractors — questions answerable er can "succeed" on a non-gold chunk; yourmetrics will look worse than reality.
+- Domain mismatch — questions written in the  users' tone. This is the biggest gap betweensynthetic and real benchmarks.
+
+Industry practice: synthetic benchmarks are a bootstrap, never a destination. Production teams replace synthetic rows
+with real user queries from production logs (ble in analytics.db — that's your source)annotated by humans. Synthetic is for week 1; logs-driven is for week 4+.
+
+---
+Step 3 — Hand-review (the most important step
+
+This is where most teams underinvest, then wos don't predict production behavior. Budget30–60 minutes for 100 rows — yes, really.
+
+Open eval/benchmark.jsonl in your editor. For each row, apply this checklist:
+
+┌────────────────────────────────────┬───────────────────────────────────────────────────────────────────────────────┐
+│               Check                │       at to do                                   │
+├────────────────────────────────────┼───────────────────────────────────────────────────────────────────────────────┤
+│ Is the question answerable only    │ If mul their IDs to gold_chunk_ids. If no chunk  │
+│ from the gold chunk?               │ is needed (the model hallucinated) → delete row.                              │
+├────────────────────────────────────┼──────────────────────────────────────────────────┤
+│ Is it a question a real user would │ If it sounds like a textbook quiz ("Which of the following...") → rewrite or  │
+│  actually ask?                     │ delete                                           │
+├────────────────────────────────────┼───────────────────────────────────────────────────────────────────────────────┤
+│ Is gold_answer factual and         │ Trim vrrors.                                     │
+│ concise?                           │                                                                               │
+├────────────────────────────────────┼──────────────────────────────────────────────────┤
+│ Did you verify the answer against  │ If yes, flip "synthesized": true → false. That field is your "human-vetted"   │
+│ the chunk?                         │ flag.                                            │
+├────────────────────────────────────┼───────────────────────────────────────────────────────────────────────────────┤
+│ Is the question too easy?          │ If theself, delete.                              │
+└────────────────────────────────────┴───────────────────────────────────────────────────────────────────────────────┘
+
+Finding multi-chunk questions: these are the gold of a benchmark because they stress your top_k and reranker. Look for
+questions like "How does X compare to Y" or "or Z" — if those facts live in differentchunks, you must list all chunk IDs in gold_chunk_ids or Recall@k will be misleadingly low.
+
+Look up a chunk ID's content while reviewing:
+python -c "
+import chromadb
+c = chromadb.PersistentClient(path='chroma_db)
+print(c.get(ids=['PASTE_CHUNK_ID'], include=['documents'])['documents'][0])
+"
+
+Target after review: 30–60 high-quality rows all clean benchmark is more useful than a large noisy one — noise drowns out the signal of your config changes.
+
+---
+Step 4 — Run the baseline
+
+python eval/run.py --tag baseline --notes "in50"
+
+What this records (read eval/run.py:166-185):uns with tag, git_sha, config_json,metrics_json, num_queries, notes, and timestamp. Per-query details are written to eval/results/<timestamp>_baseline.jsonl
+ for postmortem analysis.
+
+Read the printed output carefully:
+hit_at_1       = 0.6XXX        ← did the top-1 retrieval match a gold chunk?
+recall_at_5    = 0.7XXX        ← did any of ts?
+mrr            = 0.6XXX        ← rank-weighted: penalizes pushing gold to position 5 vs 1
+faithfulness   = 4.X / 5       ← is the genereved context?
+correctness   = 3.X / 5       ← does it match gold_answer in meaning?
+
+Industry interpretation rules:
+- Hit@1 < 0.5 → retriever is genuinely weak. t yet; fix retrieval first. Generators can'tfix bad context.
+- Recall@5 high but Hit@1 low → ranking probl set but not first). A reranker is the fix.
+- Recall@5 low → the right chunk isn't even in top-5. Either chunks are wrong size, embedding model is wrong domain, or
+your benchmark has unsolvable rows.
+- Faithfulness ≥ 4 but correctness ≤ 3 → answers are grounded but in the wrong context. This is a retrieval problem
+masquerading as a generation problem.
+- Correctness ≥ 4 but faithfulness ≤ 3 → model is using its prior knowledge to answer correctly without grounding.
+Dangerous; it'll fail on truly novel docs.
+
+Judge bias warning (eval/judge.py:8-10): your Cohere. Cohere will tend to grade Coheregenerously. Treat the judge as a direction sensor, not an absolute score. Trust trends, not values.
+
+If this run looks sane, mark task 4 complete.
+
+---
+Step 5 — Change ONE thing and re-run
+
+The whole point of the rig is comparison. A sis:
+
+1. Easy wins first: top_k (free, just retriev
+2. Chunking: chunk_size, overlap (requires re-ingestion)
+3. Retrieval: add hybrid search (BM25 + vecto
+4. Generation: prompt template, model swap, temperature
+5. Pre-retrieval: query rewriting, HyDE
+
+Example: try larger top_k (the cheapest exper
+python eval/run.py --tag topk-10 --top-k 10 --notes "more chunks fed to generator"
+
+Example: try smaller chunks (requires re-ingestion):
+1. Update your chunker config in src/ingestiok_size 500 → 300).
+2. Delete and re-ingest the corpus — old chunk IDs no longer exist, so your benchmark's gold_chunk_ids are now stale.
+This is a critical gotcha. You have two optio
+  - Acceptable for early experimentation: regenerate the benchmark with synthesize.py (loses comparability with baseline;
+ only delta vs new benchmark is meaningful).
+  - Industry practice: make chunk IDs content-derived (hash of text) instead of UUIDs, so a chunk with the same text gets
+ the same ID across re-ingestions. Then your actoring if you're going to iterate on chunking a lot.
+3. Run: python eval/run.py --tag chunk-300 --ested".
+
+Commit between runs: the git_sha column is wiange so the eval_runs row records which commitproduced which metrics. This is how you build an audit trail.
+
+git add -A && git commit -m "eval: try chunk_size=300"
+python eval/run.py --tag chunk-300 --notes "s
+
+The 5% rule: with ~50 vetted rows, deltas undise. Don't celebrate a 2% improvement — it'slikely benchmark variance. Either grow the benchmark or run the same config 3x to estimate variance.
+
+---
+Step 6 — Compare on the Statistics page
+
+streamlit run src/dashboard/app.py
+
+Log in, navigate to Statistics in the sidebars (defined atsrc/dashboard/pages/2_Statistics.py:270-347).
+
+What you'll see:
+- A multi-select of metrics. Defaults to Hit@s, correctness.
+- A line chart with one line per metric, dashed by tag. Each run is a marker; hovering shows id and tag.
+- A run history table below.
+
+How to read it as a real reviewer would:
+1. Sort the table by timestamp descending. Look at the two or three most recent runs.
+2. Pick one metric at a time in the multi-seln one chart hides the story.
+3. Cross-check retrieval and judge metrics. A baseline → variant move that improves Hit@1 by 0.05 and correctness by 0.3
+is real. A move that improves correctness alospicious (judge variance or hallucination thathappened to look right).
+4. Always read the per-query JSONL in eval/ren. Find the rows where the variant lost vsbaseline. Those losses tell you what your change broke.
+
+Decision criteria (industry):
+- Ship the change if: it wins on the primary ectness) by more than estimated noise, anddoesn't regress secondary metrics meaningfully.
+- Keep iterating if: wins are within noise OR't understand.
+- Never ship based on aggregates alone — always spot-check 5 losing queries.
+
+---
+What "good" looks like after a week of this
+
+After 5–10 runs you should have:
+- A benchmark file in git with synthesized=false on every row (fully human-vetted).
+- An eval_runs table with 5+ rows, monotonicaleast one metric.
+- A clear story: "baseline → topk-10 → +reranker → chunk-300+reranker" where each step is one variable and each delta is
+explainable.
+- Confidence about what not to do (the dead-end experiments are as valuable as the wins).
+
+That story is what you put in a design doc when you ship to prod.
+
+---
+Tell me which step you want to actually execumands with you (and mark tasks complete as wego). My recommendation: start with step 1 right now (python -c ... chunk count check) so we know the corpus is ready
+before you spend money synthesizing.
+
+✻ Churned for 2m 15s
+
+❯ okay i want to use this for the dataset, httpectara/open_ragbench/tree/main
+
+Good call — that's a real step up from synthe structure first so I can give you accurateguidance, since the approach changes meaningfully when you swap a synthetic benchmark for a published one.
+
+⏺ Fetch(https://huggingface.co/datasets/vectara/open_ragbench/tree/main)
+Received 84.2KB (200 OK)
+
+⏺ Fetch(https://huggingface.co/datasets/vectaraE.md)
+Received 9.2KB (200 OK)
+
+Got the schema. This is a significant pivot from what eval/synthesize.py does, so let me lay out what changes before we
+start writing anything.
+
+What the dataset is
+
+Open RAG Benchmark (Vectara, 743 MB):
+- 1000 arXiv PDFs — 400 "positive" (have queries against them) + 600 "hard negatives" (irrelevant; stress-test retrieval)
+- 3045 QA pairs, each linked to a (doc_id, se
+- BEIR format: corpus/{paper_id}.json, queries.json, qrels.json, answers.json, pdf_urls.json
+- Multimodal: 1914 text-only queries, the res
+
+Why this changes your pipeline
+
+Your existing eval/synthesize.py records goldDs. That works because the questions weregenerated from your chunks. With open_ragbench, the gold is (doc_id, section_id) — a section of a PDF, which your chunker
+ will split into multiple chunks differently tions.
+
+So you can't drop the JSONL in directly. You gesting the PDFs through your pipeline, findwhich of your chunks overlap with each gold section, and call those the gold_chunk_ids. That's a one-time
+load_ragbench.py script. After that, your exiics page work unchanged.
+
+Industry framing
+
+Three architectural decisions matter here, aniting code:
+
+⏺ User answered Claude's questions:
+· What scope of open_ragbench do you want to start with? → Subset: ~50 papers / 150 queries (Recommended)
+· How should the PDFs enter your system? →r (Recommended)
+· Which query types do you want to evaluate? → Text-only queries first (1914 of 3045)
+· Does open_ragbench replace your current Separate collection (Recommended)
+
+Good. Let me inspect the retriever to see howons, then I'll lay out the implementation planand the new tasks.
+
+  Read 2 files
+
+The old tasks were tied to the synthesize.py flow. Let me clean them up and rebuild around the open_ragbench pipeline.
+
+Task list rebuilt. Now here's the full plan and the design walkthrough — the why first, then I'll write the code.
+
+---
+The new pipeline architecture
+
+HuggingFace dataset metadata           Your e
+─────────────────────────────          ─────────────────────────────
+queries.json   ─┐                      Docume
+qrels.json     ─┤                      ├─ chunks PDF
+answers.json   ─┤                      ├─ emb
+pdf_urls.json  ─┘                      └─ stores in ChromaDB
+       │
+       ▼                                       ▼
+   sample 150 text-only          chroma_db/
+   queries → identify ~50           chunk_id_1, chunk_id_2, ...
+   unique gold paper IDs
+       │                                       │
+       └───────────► download those PDFs ────
+                                               │
+                     ┌───────────────────────
+                     ▼
+        Mapping step: for each query,
+        find which of OUR chunks contain
+        text from the gold section → gold_chu
+                     │
+                     ▼
+        eval/benchmark_ragbench.jsonl ── same schema as before
+                     │
+                     ▼
+        eval/run.py --collection ragbench  ──
+
+The clever part: everything after benchmark_r Your metrics module, judge module, eval_runstable, Statistics page — all untouched. We're just feeding them a real-world benchmark instead of a synthetic one.
+
+---
+The mapping step (the only conceptually new p
+
+This is what separates a "real" RAG evaluatio gives you (query, doc_id, section_id). Yourchunker turns each PDF into N chunks. Question: which of those N chunks should count as "gold" for that query?
+
+The algorithm (industry-standard, called passage overlap matching):
+
+For each query in the dataset:
+  gold_section_text = corpus[doc_id]["section
+
+  Build word n-gram set from gold_section_tex
+
+  For each chunk in chroma_db where metadata.
+    chunk_grams = 8-grams of chunk text
+    overlap = |chunk_grams ∩ gold_grams| / |c
+    if overlap >= 0.3:           # at least 30% of chunk is in gold section
+      mark as gold
+
+Why n-gram overlap and not exact substring? Puirks; whitespace-tolerant n-gram overlapsurvives those. Also handles the case where one chunk spans the gold-section boundary — it'll partially match.
+
+Why ≥30% (not 50% or 80%)? A chunk that contains 30% of its tokens in the gold section is almost certainly about that
+section. Higher thresholds miss boundary chune positives. 30% is a defensible default —record it in your eval config so future-you knows.
+
+Edge case to handle: if a query's (doc_id, section_id) yields ZERO gold chunks (no chunk crosses the 30% threshold), drop
+ that query. Otherwise it'll show up as Hit@1retable noise. Log how many you dropped.
+
+---
+Implementation decisions
+
+Before I write code, two more small judgement calls:
+
+⏺ User declined to answer questions
+· How should load_ragbench.py fetch the davia huggingface_hub (Recommended) / git clonethe full repo with LFS / datasets library (load_dataset))
+· Where should ragbench PDFs be stored on ecommended) / /tmp/ragbench_pdfs/)
+
+❯ before we go ahead, I want to understand few ning with hugging face dataseta and mydocument processor, why are we trying to map, and what is this "gold", what is the n-gram concept, why is it even used
+
+Great instinct — these are the right questions to ask before writing any code. Let me explain each piece concretely.
+
+---
+1. Why a mismatch exists between the dataset
+
+You have two different views of the same PDF
+
+The HuggingFace dataset's view of each paper:
+The dataset authors took each arXiv PDF and parsed it into logical sections — Abstract, Introduction, Methods, Results,
+etc. They stored it as JSON:
+corpus/2310.12345.json
+  sections[0] = { text: "We propose a new tra
+  sections[1] = { text: "Our method uses cross-attention..." } ← Methods
+  sections[2] = { text: "On benchmark X we ac
+Then for each question, they recorded which section contains the answer:
+qrels["q-abc-123"] = { doc_id: "2310.12345",
+                                              ^^^^^^^^^^^^^
+                            "The answer is in
+
+Your document processor's view of the same PD:
+You don't care about sections. You extract all the PDF text into one big string, then split it by word count:
+chunk_text(text, chunk_size=500, overlap=50)
+So a 5000-word paper becomes ~11 chunks with IDs like a1b2c3..._chunk_0, a1b2c3..._chunk_1, ... These chunks have no idea
+ about section boundaries. A single chunk migstart of Results. Another chunk might beentirely inside Methods. Sections and chunks are different units.
+
+That's the mismatch. The dataset speaks in sections. Your retriever speaks in chunks. They don't have a shared
+vocabulary.
+
+---
+2. What "gold" means
+
+"Gold" is information-retrieval jargon for ground truth — the answer a human (or trusted source) marked as correct. The
+word comes from search benchmarks like TREC ad documents and label "yes, this document isrelevant to this query." Those labels are the gold standard against which a retriever is measured.
+
+In your eval pipeline, look at eval/metrics.py:14:
+def hit_at_1(retrieved_ids, gold_ids):
+    return 1 if retrieved_ids[0] in gold_ids else 0
+This asks: "Did the retriever's #1 result matcorrect?" If yes → 1 point. If no → 0 points.Sum across all queries, divide by count = Hit@1 score.
+
+Without gold_ids, this entire metric is impossible. You'd only have the LLM-judge metrics (faithfulness, correctness),
+which conflate retrieval errors with generati if a bad answer was caused by retrieving thewrong chunk or by the generator screwing up correct context. That's why establishing gold is non-negotiable.
+
+In synthesize.py we got gold_chunk_ids for free, because the synthesizer literally generated each question from a
+specific chunk — that chunk's ID was, by consal benchmark you don't get this for free; youhave to derive it.
+
+---
+3. Why mapping exists
+
+Restate the situation:
+- The dataset tells you: "Query Q is answered by section 1 of paper 2310.12345"
+- Your retriever can only return: chunk IDs fc3..._chunk_7, _chunk_8, ...)
+
+The dataset's section_id=1 is meaningless to urn "section 1." It can only return chunks. Sobefore you can ask "did the retriever find the right thing?" you need to translate the dataset's answer (a section) into
+your system's vocabulary (chunk IDs).
+
+That translation is the mapping step: figure maDB contain text from the gold section.Concretely:
+
+Dataset says:                Mapping figures out:           Eval can now ask:
+section_id=1 of paper X  →   gold_chunk_ids = return
+  "Our method uses…"           _chunk_8, _chunk_9]            chunks 7/8/9 in top-k?"
+
+The mapping runs once after ingestion. The output is written into benchmark.jsonl and frozen — every future eval run
+reads it without re-mapping.
+
+Why this isn't cheating: you're not telling tre telling the evaluator what the answer is, so it can grade the retriever fairly. The retriever still has to find chunks 7/8/9 on its own using just the query text.
+
+---
+4. n-grams and why they're the right tool her
+
+What an n-gram is: a sliding window of N cons
+
+Example with "machine learning is a subset of
+- 1-grams: ["machine", "learning", "is", "a", "subset", "of", "AI"]
+- 3-grams: ["machine learning is", "learning et of", "subset of AI"]
+- 8-grams: none (only 7 words). In your real chunks (~500 words) you'd get ~493 distinct 8-grams.
+
+The mapping problem restated: given the text of a gold section (call it S) and the text of a candidate chunk (call it C),
+ decide if C "is about the same content as" S
+
+You could try simpler approaches first. Here'
+
+Naive option A — exact substring match: "is C
+Fails because PDFs are messy. Section text was extracted by the dataset authors using one parser; your chunks were
+extracted by PyPDF2. The same paragraph may d
+- Whitespace (single space vs double space vs newline)
+- Unicode (em-dash vs hyphen, ligatures like
+- Hyphenated line breaks ("re-\nsult" vs "result")
+
+One character mismatch breaks a substring match across an entire chunk. Brittle.
+
+Naive option B — word set overlap (Jaccard on unigrams):
+Treat both S and C as bags of words; compute
+
+Fails for two reasons:
+- Common words dominate. "the", "of", "and", "is" appear in literally every chunk. Two completely unrelated chunks share
+30% of their words just because English has f
+- No word order. "Cats eat fish" and "Fish eat cats" become identical bags. Two paragraphs from different sections that
+happen to share vocabulary look identical.
+
+Why n-grams (with N ≈ 5–10) fix both:
+- Order-sensitive. An 8-gram like "we propose a novel cross-attention mechanism for" only matches if those 8 words appear
+ in that exact order. The probability of an 8ncidence in unrelated text is vanishinglysmall.
+- Resilient to local noise. One typo or whitehe ones overlapping that position) — out of~500 in a chunk. The other 492 still match. Substring matching breaks on one character; n-gram overlap degrades
+gracefully.
+- Cheap to compute. Just set(zip(*[words[i:] for i in range(8)])). Hashing-friendly.
+
+The specific metric we'd use:
+overlap = |n-grams(chunk) ∩ n-grams(section)|
+Reads as: "what fraction of this chunk's phrases also appear in the gold section?" If 30%+ of the chunk's 8-word phrases
+live inside the section, the chunk is overwheat section's content. Mark it gold.
+
+Where else this technique is used: plagiarism engine deduplication, near-duplicate detection in web crawls, the original MinHash/LSH papers. It's the standard fingerprinting tool when you need fuzzy text-match
+with order sensitivity.
+
+The 30% threshold is not magic. It's a knob.  section boundaries (which only partiallyoverlap). Too low → unrelated chunks that share boilerplate ("we evaluate on benchmark X") sneak in. 30% is a reasonable
+starting default; if your spot-check in task enient or too strict, you'd tune it and re-runthe mapping.
+
+---
+Recap in one sentence
+
+▎ The dataset and your retriever describe the (sections vs chunks), so we use n-gram overlap as a fuzzy translator that takes the dataset's "the answer lives in section X" and converts it into your retriever's language: "the answer lives in chunks 7, 8,
+
+Want me to go deeper on any of these (n-gram ategies like embedding similarity, how BEIRhandles this), or are we good to move on to the implementation choices?
+
+
+----------next run steps ---------------
+
+All code is in place. Here's exactly what to run next, with the why for each step.
+
+---
+What I just built (recap)
+
+┌─────────────────────────────────────┬────────────────────────────────────────┬─────────────────────────────────────┐
+│                File                 │                 Change                 │               Purpose               │
+├─────────────────────────────────────┼────────────────────────────────────────┼─────────────────────────────────────┤
+│                                     │                                        │ Lets us write to a separate         │
+│ src/ingestion/document_processor.py │ __init__(collection_name="documents")  │ ragbench collection without         │
+│                                     │                                        │ touching prod data                  │
+├─────────────────────────────────────┼────────────────────────────────────────┼─────────────────────────────────────┤
+│ src/retrieval/retriever.py          │ __init__(collection_name="documents")  │ Lets eval read from ragbench        │
+│                                     │                                        │ collection                          │
+├─────────────────────────────────────┼────────────────────────────────────────┼─────────────────────────────────────┤
+│ eval/run.py                         │ --collection flag; recorded in         │ So every eval_runs row knows which  │
+│                                     │ config_json                            │ corpus was scored                   │
+├─────────────────────────────────────┼────────────────────────────────────────┼─────────────────────────────────────┤
+│ eval/load_ragbench.py               │ New script                             │ Full pipeline: filter → download →  │
+│                                     │                                        │ ingest → map → write JSONL          │
+└─────────────────────────────────────┴────────────────────────────────────────┴─────────────────────────────────────┘
+
+Idempotency safeguards in load_ragbench.py:
+- PDF download is cached on disk; re-runs skip already-downloaded files
+- --skip-download / --skip-ingest flags let you iterate on the mapping step alone without paying download/ingest cost again
+- --reset wipes the ragbench collection only if you ask
+
+---
+Step-by-step from here
+
+1. Clone the dataset (do this in your terminal — interactive auth/LFS may apply)
+
+cd /Users/myid/Documents/Projects/IntelliRAGs
+git lfs install                       # one-time setup if you've never used LFS
+git clone https://huggingface.co/datasets/vectara/open_ragbench data/ragbench_raw
+
+This downloads ~743 MB. While it runs, you can read the next section.
+
+Industry note: keep data/ragbench_raw/ out of your project's git history. Add it to .gitignore:
+echo "data/ragbench_raw/" >> .gitignore
+echo "data/ragbench_pdfs/" >> .gitignore
+
+2. Run load_ragbench.py (the big one)
+
+python eval/load_ragbench.py \
+    --ragbench-dir data/ragbench_raw \
+    --n 150 \
+    --reset
+
+What you should see, in order:
+1. queries=3045 qrels=3045 ... — confirms metadata files loaded
+2. Sampled 150 text-only queries (seed=42) — deterministic, so the same seed always picks the same queries
+3. They reference ~50 unique PDFs — the count is whatever falls out of the sample; usually ~30–60
+4. PDF download progress (this is the slowest part — arxiv has rate limits; the 0.4s sleep between requests is intentional)
+5. Ingestion progress — each PDF becomes ~10–50 chunks via your 500-word chunker
+6. Mapping summary with overlap statistics — this is where you learn whether the threshold is right
+
+The number to watch most carefully: dropped (no chunk crossed threshold). If it's >30% of your sample, the threshold is too strict — chunks aren't matching gold sections, probably because your chunker's boundaries don't align with the dataset's section boundaries. Try --threshold 0.20 and re-run with --skip-download --skip-ingest.
+
+If median overlap fraction is very low (say <0.1), the dataset's section text and your extracted PDF text differ more than expected — possibly a PDF extraction quality issue worth investigating.
+
+3. Spot-check (task #3 — the most important debugging step)
+
+Don't run baseline eval before doing this. Pick 5–10 random rows from eval/benchmark_ragbench.jsonl and manually verify the mapping. Quick check:
+
+python -c "
+import json, chromadb
+client = chromadb.PersistentClient(path='chroma_db').get_collection('ragbench')
+with open('eval/benchmark_ragbench.jsonl') as f:
+    for i, line in enumerate(f):
+        if i >= 5: break
+        row = json.loads(line)
+        print('Q:', row['query'])
+        print('Gold answer:', row['gold_answer'][:200])
+        for cid in row['gold_chunk_ids'][:2]:
+            txt = client.get(ids=[cid], include=['documents'])['documents'][0]
+            print(f'  [{cid[:20]}…] {txt[:200]}…')
+        print()
+"
+
+For each row, the chunks shown should plausibly contain the answer to the query. If they don't, the mapping is bad and metrics will be garbage.
+
+4. Baseline eval
+
+python eval/run.py \
+    --tag ragbench-baseline \
+    --benchmark eval/benchmark_ragbench.jsonl \
+    --collection ragbench \
+    --notes "open_ragbench n=150 text-only, chunk=500/50, top_k=5, threshold=0.30"
+
+This will cost more in Cohere calls than your sample-corpus eval did (150 queries × judge + generator). Expect 8–15 minutes depending on rate limits.
+
+5. Variant — change one thing
+
+The cheapest meaningful variant is --top-k 10:
+python eval/run.py --tag ragbench-topk10 --benchmark eval/benchmark_ragbench.jsonl --collection ragbench --top-k 10 --notes "more chunks"
+
+For chunk-size variants, re-run load_ragbench.py after editing your chunker (because chunk IDs change), with --reset --skip-download so you don't re-fetch PDFs.
+
+6. Compare on Statistics page
+
+streamlit run src/dashboard/app.py
+
+The "🧪 Evaluation Runs" section will now have two lines per metric (one per tag). Look for: does the variant clearly improve a metric, or is it within noise (±5% on Hit@1 with 150 queries)?
+
+---
+Tell me when the clone finishes (or starts), and I can either watch the load_ragbench.py output with you or help interpret the overlap statistics when it lands.

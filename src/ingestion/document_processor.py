@@ -41,29 +41,25 @@ class DocumentProcessor:
     - Store in vector database
     """
     
-    def __init__(self):
+    def __init__(self, collection_name: str = "documents"):
         """
         Initialize the document processor.
-        
-        Creates connections to:
-        1. Cohere API (for embeddings)
-        2. ChromaDB (for storage)
+
+        Args:
+            collection_name: ChromaDB collection to write into. Default
+                "documents" preserves existing production behavior; pass a
+                different name (e.g. "ragbench") to isolate eval corpora.
         """
-        # Initialize Cohere client with API key from environment
         cohere_api_key = os.getenv("COHERE_API_KEY")
         if not cohere_api_key:
             raise ValueError("COHERE_API_KEY environment variable is not set")
         self.co = cohere.Client(cohere_api_key)
-        
-        # Initialize ChromaDB with persistent storage
-        # PersistentClient = saves data to disk (survives restarts)
+
         self.chroma_client = chromadb.PersistentClient(path="./chroma_db")
-        
-        # Get or create collection for storing documents
-        # Collection = like a table in traditional databases
+
         self.collection = self.chroma_client.get_or_create_collection(
-            name="documents",
-            metadata={"hnsw:space": "cosine"}  # Use cosine similarity for search
+            name=collection_name,
+            metadata={"hnsw:space": "cosine"}
         )
     
     def extract_text(self, file_path: str) -> str:

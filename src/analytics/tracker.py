@@ -94,7 +94,22 @@ class AnalyticsTracker:
                 FOREIGN KEY (query_id) REFERENCES queries(id)
             )
         ''')
-        
+
+        # Eval runs table: one row per benchmark run
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS eval_runs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                timestamp TEXT NOT NULL,
+                tag TEXT,
+                git_sha TEXT,
+                benchmark_path TEXT,
+                num_queries INTEGER,
+                config_json TEXT,
+                metrics_json TEXT,
+                notes TEXT
+            )
+        ''')
+
         conn.commit()
         conn.close()
     
@@ -267,6 +282,66 @@ class AnalyticsTracker:
             "generated_at": datetime.utcnow().isoformat()
         }
     
+    def log_eval_run(
+        self,
+        tag: str,
+        config: Dict,
+        metrics: Dict,
+        num_queries: int,
+        benchmark_path: str = "",
+        git_sha: str = "",
+        notes: str = "",
+    ) -> int:
+        """Record one benchmark run. Returns the eval_runs row id."""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        cursor.execute('''
+            INSERT INTO eval_runs (timestamp, tag, git_sha, benchmark_path,
+                                   num_queries, config_json, metrics_json, notes)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        ''', (
+            datetime.utcnow().isoformat(),
+            tag,
+            git_sha,
+            benchmark_path,
+            num_queries,
+            json.dumps(config),
+            json.dumps(metrics),
+            notes,
+        ))
+        conn.commit()
+        run_id = cursor.lastrowid
+        conn.close()
+        if run_id is None:
+            raise RuntimeError("Failed to get eval_runs id from database")
+        return run_id
+
+    def get_eval_history(self, limit: int = 50) -> List[Dict]:
+        """Return recent eval runs ordered by timestamp ASC for trend plotting."""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        cursor.execute('''
+            SELECT id, timestamp, tag, git_sha, num_queries, config_json, metrics_json, notes
+            FROM eval_runs
+            ORDER BY timestamp ASC
+            LIMIT ?
+        ''', (limit,))
+        rows = cursor.fetchall()
+        conn.close()
+        history = []
+        for row in rows:
+            history.append({
+                "id": row[0],
+                "timestamp": row[1],
+                "tag": row[2],
+                "git_sha": row[3],
+                "num_queries": row[4],
+                "config": json.loads(row[5]) if row[5] else {},
+                "metrics": json.loads(row[6]) if row[6] else {},
+                "notes": row[7],
+            })
+        return history
+
     def get_query_trends(self, days: int = 7) -> List[Dict]:
         """
         Get daily query volume trends.
