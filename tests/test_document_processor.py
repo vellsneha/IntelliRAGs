@@ -1,4 +1,11 @@
 # test_processor.py
+import os
+import sys
+
+# Allow running this script directly from the repo root (`python tests/test_document_processor.py`)
+# by putting the project root on sys.path so `import src...` resolves.
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 from src.ingestion.document_processor import DocumentProcessor
 
 # Create a simple test document

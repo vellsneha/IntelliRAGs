@@ -1,17 +1,47 @@
-# Intelli RAG System
+# IntelliRAGs
 
-A production-ready **Retrieval-Augmented Generation (RAG)** system that enables intelligent document Q&A through semantic search and AI-powered answer generation. Built with FastAPI backend, Streamlit dashboard, Cohere LLMS and ChromaDB.
+A hands-on **Retrieval-Augmented Generation (RAG)** project: upload documents, ask
+questions, and get answers grounded in those documents — plus a real evaluation
+harness to measure whether the retrieval and the answers are any good.
 
+This is a **learning project**, not a production system. It implements a clean,
+standard ("baseline") RAG pipeline end to end and pairs it with an honest
+evaluation setup so the design choices can be measured rather than guessed at.
+Where the numbers have caveats, they're spelled out below.
 
-## Features
+> **Setup and run instructions live in [`docs/RUNNING.md`](docs/RUNNING.md).**
+> This file explains *what* the system is, *how* it's built, and *what the
+> evaluation showed*.
 
-Focused on implementing the Basic RAG structure, thus contains all the basic requirements such as, the semantic search, JWT Authentication, Dashboard and also the Safety Guardrails.
+---
 
-### Enterprise Features
-- **Security First**: JWT tokens, input validation, safety checks
-- **Analytics Tracking**: SQLite-based analytics with performance metrics
-- **RESTful API**: Fully documented FastAPI endpoints
-- **State Management**: Persistent vector database with ChromaDB
+## What it does
+
+1. **Ingest** a document (PDF / DOCX / TXT) → extract text → split into chunks →
+   embed each chunk → store the vectors in ChromaDB.
+2. **Ask** a question → embed the question → find the most similar chunks
+   (semantic search) → hand those chunks + the question to an LLM → return a
+   grounded answer with its sources.
+3. **Observe** — every query, upload, and piece of feedback is logged to a SQLite
+   analytics database, viewable in the dashboard.
+
+### The stack
+
+| Layer | Choice | Notes |
+|-------|--------|-------|
+| API | FastAPI | REST endpoints + Swagger docs at `/docs` |
+| UI | Streamlit | Login → upload/ask → statistics pages |
+| Vector store | ChromaDB | Persistent, cosine similarity |
+| Embeddings | Cohere `embed-english-v3.0` | 1024-dim vectors |
+| Generation | Cohere `command-r7b-12-2024` | temperature 0.3 for Q&A |
+| Analytics | SQLite (`analytics.db`) | queries, events, feedback, `eval_runs` |
+
+### Key pipeline parameters
+
+- **Chunking:** 500 words per chunk, 50-word overlap (`document_processor.py`)
+- **Retrieval:** top-k = 5 by default, cosine distance
+- **Embedding input types:** `search_document` at ingest, `search_query` at query
+  time (Cohere's recommended asymmetric setup)
 
 ---
 
@@ -19,323 +49,202 @@ Focused on implementing the Basic RAG structure, thus contains all the basic req
 
 ```
 ┌─────────────────┐
-│  Streamlit UI   │ ← User Interface (Dashboard)
+│  Streamlit UI   │  Login, upload, ask, statistics
 └────────┬────────┘
-         │ HTTP/HTTPS
+         │ HTTP
          ▼
 ┌─────────────────┐
-│   FastAPI API   │ ← REST API Layer
+│   FastAPI API   │  auth (JWT) · upload · query · analytics · feedback
 └────────┬────────┘
-         │
-    ┌────┴────┐
-    ▼         ▼
+    ┌─────┴─────┐
+    ▼           ▼
 ┌─────────┐ ┌─────────────┐
 │Document │ │  Retriever  │
 │Processor│ │   (RAG)     │
 └────┬────┘ └──────┬──────┘
-     │             │
+     │ embed       │ embed query + search
      ▼             ▼
 ┌─────────────────────┐
-│    ChromaDB         │ ← Vector Database (Embeddings)
-│  (Vector Storage)   │
+│      ChromaDB       │  vector storage
 └─────────────────────┘
          │
          ▼
 ┌─────────────────────┐
-│   Cohere API        │ ← Embeddings & LLM
-│  (Embed + Generate) │
+│     Cohere API      │  embeddings + LLM generation
 └─────────────────────┘
 ```
 
-### Component Flow
+### API endpoints
 
-1. **Document Upload** → `DocumentProcessor` extracts text, chunks it, generates embeddings
-2. **Embeddings** → Stored in ChromaDB for fast similarity search
-3. **User Query** → `Retriever` finds relevant chunks using semantic search
-4. **Context + Query** → Sent to Cohere LLM to generate answer
-5. **Response** → Displayed to user with source citations
-6. **Analytics** → All interactions logged for insights
-
----
-
-## Installation
-
-### Prerequisites
-
-- **Python 3.13+** (tested with Python 3.13.5)
-- **Cohere API Key** ([Get one here](https://dashboard.cohere.com/))
-
-### Step-by-Step Setup
-
-1. **Clone the repository**
-   ```bash
-   git clone <repository-url>
-   cd enterprise-rag-system
-   ```
-
-2. **Create a virtual environment**
-   ```bash
-   python3 -m venv venv
-   source venv/bin/activate  # On Windows: venv\Scripts\activate
-   ```
-
-3. **Install dependencies**
-   ```bash
-   pip install -r requirements.txt
-   ```
-
-4. **Set up environment variables**
-   
-   Create a `.env` file in the project root:
-   ```bash
-   touch .env
-   ```
-   
-   Add the following variables:
-   ```env
-   # Required: Cohere API Key for embeddings and LLM
-   COHERE_API_KEY=your_cohere_api_key_here
-   ```
+| Method | Path | Purpose |
+|--------|------|---------|
+| `GET`  | `/` | Health check |
+| `POST` | `/auth/login` | Get a JWT |
+| `POST` | `/documents/upload` | Ingest a document |
+| `POST` | `/query` | Ask a question (RAG) |
+| `GET`  | `/analytics/summary` | Usage metrics |
+| `POST` | `/feedback` | Rate an answer |
 
 ---
 
-## Quick Start
-
-### 1. Start the FastAPI Server
-
-```bash
-# Activate virtual environment
-source venv/bin/activate  # On Windows: venv\Scripts\activate
-
-# Start the API server
-uvicorn src.api.main:app --reload --host 0.0.0.0 --port 8000
-```
-
-The API will be available at: `http://localhost:8000`
-
-- **API Documentation**: `http://localhost:8000/docs` (Swagger UI)
-- **Alternative Docs**: `http://localhost:8000/redoc` (ReDoc)
-
-### 2. Start the Streamlit Dashboard
-
-In a **new terminal window**:
-
-```bash
-# Activate virtual environment
-source venv/bin/activate  # On Windows: venv\Scripts\activate
-
-# Start the dashboard
-streamlit run src/dashboard/app.py
-```
-
-The dashboard will open at: `http://localhost:8501`
-
-### 3. Login and Use
-
-1. **Login Page**: Enter credentials (default: `demo` / `demo123`)
-2. **Dashboard**: Upload documents and ask questions
-3. **Statistics**: View analytics and system metrics
-
----
-
-## Project Structure
-It Should Look like this.
+## Repository layout
 
 ```
-enterprise-rag-system/
+IntelliRAGs/
+├── README.md                  # this file — what & why
+├── docs/
+│   ├── RUNNING.md             # setup + run guide
+│   └── MoreInfo.pdf           # supplementary project notes
 ├── src/
-│   ├── api/
-│   │   └── main.py              # FastAPI application & endpoints
-│   ├── dashboard/
-│   │   ├── app.py               # Login page 
-│   │   └── pages/
-│   │       ├── 1_Dashboard.py   # Main dashboard 
-│   │       └── 2_Statistics.py  # Analytics & statistics
+│   ├── api/main.py            # FastAPI app & endpoints
+│   ├── dashboard/             # Streamlit app + pages/
 │   ├── ingestion/
-│   │   └── document_processor.py # Document parsing, chunking, embeddings
+│   │   └── document_processor.py  # extract → chunk → embed → store
 │   ├── retrieval/
-│   │   └── retriever.py         # RAG pipeline 
-│   ├── analytics/
-│   │   └── tracker.py           # Analytics tracking & SQLite DB
-│   └── guardrails/
-│       └── safety.py            # Security checks 
-├── data/
-│   └── uploads/                 # Uploaded documents storage
-├── chroma_db/                   # ChromaDB vector database 
-├── analytics.db                 # SQLite analytics database 
-├── requirements.txt             # Python dependencies
-├── .env                         # Environment variables 
-├── pyrightconfig.json           # Type checking configuration
-└── README.md                    # This file
+│   │   └── retriever.py       # semantic search + answer generation
+│   ├── analytics/tracker.py   # SQLite logging (incl. eval_runs)
+│   └── guardrails/safety.py   # prompt-injection / jailbreak / PII checks
+├── eval/                      # evaluation harness (see below)
+│   ├── load_ragbench.py       # build a benchmark from Open RAG Benchmark
+│   ├── synthesize.py          # alt: synthesize Q/A pairs from your own chunks
+│   ├── run.py                 # run the harness, log a row to eval_runs
+│   ├── metrics.py             # Hit@1, Recall@k, MRR
+│   ├── judge.py               # LLM-as-judge (faithfulness, correctness)
+│   ├── spot_check.py          # eyeball the gold-chunk mapping
+│   └── results/               # per-run output
+├── tests/                     # smoke-test scripts (run with python, not pytest)
+├── data/uploads/              # runtime uploads (gitignored)
+├── requirements.txt
+└── .env.example               # copy to .env and add your keys
 ```
 
----
-
-## Security Features
-
-### Authentication & Authorization
-- **JWT Tokens**: Secure token-based authentication
-- **Password Hashing**: bcrypt with salt (via Passlib)
-- **Token Expiration**: 30-minute token lifetime
-
-### Input Validation
-- **Safety Guardrails**: Protection against:
-  - Prompt injection attacks
-  - Jailbreak attempts
-  - PII (Personally Identifiable Information) leakage
-  - DoS attacks (input length limits)
-
-### Data Protection
-- **PII Detection**: Automatic detection of sensitive data
-- **Output Filtering**: Scans LLM responses for security issues
-- **Input Sanitization**: Validates all user inputs
-
+> **Not in git (gitignored):** `.env`, `chroma_db/`, `analytics.db`, the venv,
+> the RAGBench dataset/PDFs under `data/`, and the scratch `.txt` files the test
+> scripts write. These are either secret, large, or regenerated on demand.
 
 ---
 
-## Analytics & Monitoring
+## Evaluation
 
-The system tracks comprehensive analytics:
+The interesting part of this project is that the RAG pipeline is **measured**, not
+just demoed. The harness answers two questions:
 
-### Metrics Tracked
-- **Query Performance**: Response time, token usage
-- **User Behavior**: Query frequency, top users
-- **System Events**: Uploads, errors, feedback
-- **Quality Metrics**: Answer ratings, user satisfaction
+- **Retrieval quality:** when we search, do we surface the right chunk? *(Hit@1,
+  Recall@5, MRR)*
+- **Answer quality:** is the generated answer grounded in the retrieved context,
+  and does it match the reference answer? *(LLM-judged faithfulness & correctness)*
 
-### Database Schema
-- `queries`: Query logs with performance data
-- `feedback`: User ratings and comments
-- `system_events`: System-level events (uploads, errors)
-- `users`: User activity tracking
+### How the benchmark is built
 
-### Accessing Analytics
+The benchmark is derived from Vectara's
+[Open RAG Benchmark](https://huggingface.co/datasets/vectara/open_ragbench)
+(research papers + queries + gold answers). `eval/load_ragbench.py`:
 
-**Via Dashboard**: Navigate to "Statistics" page
+1. Deterministically samples N text-only queries (seeded, so runs are repeatable).
+2. Ingests each referenced paper's **pre-extracted section text** through the
+   *same* `DocumentProcessor` chunker + embedder the app uses — into an isolated
+   `ragbench` ChromaDB collection (so eval never touches the `documents`
+   collection).
+3. Maps each query's gold `(doc_id, section_id)` to **our** chunk IDs using
+   n-gram overlap between the gold section text and each chunk.
 
-**Via API**:
-```python
-# Get overview
-response = requests.get(
-    "http://localhost:8000/analytics/overview",
-    headers=headers
-)
+`eval/run.py` then runs the retriever over every query, computes the retrieval
+metrics, generates an answer, scores it with the LLM judge, and appends one row
+to the `eval_runs` table (tagged with the git SHA + config) for tracking over
+time.
 
-# Get recent queries
-response = requests.get(
-    "http://localhost:8000/analytics/queries?limit=10",
-    headers=headers
-)
-```
+### Baseline results
 
----
+Run `#2`, tag `ragbench-baseline`, git `badf46c`, 147 queries, top-k = 5
+(full log: `eval/results/eval_1.txt`):
 
-## Testing
+| Metric | Value | What it means |
+|--------|-------|---------------|
+| **Hit@1** | **0.463** | The top-1 retrieved chunk is a gold chunk ~46% of the time. |
+| **Recall@5** | **0.687** | A gold chunk appears in the top-5 ~69% of the time. |
+| **MRR** | **0.596** | Mean reciprocal rank ≈ 0.6 → when the gold chunk *is* found, it's usually ranked 1st–2nd. |
+| **Faithfulness** | **4.31 / 5** | Answers are mostly grounded in the retrieved context (low hallucination). |
+| **Correctness** | **4.29 / 5** | Answers mostly match the reference answers. |
+| Retrieval latency | 0.21 s | Per query. |
+| Generation latency | 2.19 s | Per query. |
+| Wall time | ~482 s (8 min) | For all 147 queries, judge included. |
 
-### Run Tests
+### How to read these honestly
 
-```bash
-# Activate virtual environment
-source venv/bin/activate
-
-# Run all tests
-pytest
-
-# Run specific test file
-pytest test_rag.py
-
-# Run with verbose output
-pytest -v
-```
-
-### Test Files
-- `test.py` - API endpoint testing
-- `test_rag.py` - RAG pipeline testing
-- `test_security.py` - Security guardrails testing
-- `test_analytics.py` - Analytics tracking testing
-- `test_document_processor.py` - Document processing testing
-
-   ```
+- **The gold mapping is a heuristic.** Gold chunks are assigned by n-gram overlap,
+  not human labeling, so there is real noise in the denominator. Treat these as a
+  **relative baseline to beat**, not absolute ground truth.
+- **The judge is biased toward the generator.** Both the judge and the generator
+  are Cohere models, so faithfulness/correctness are best read as *trends across
+  runs*, not as objective grades (this caveat is documented in `eval/judge.py`).
+- **The most actionable signal is the ranking gap.** `Recall@5 − Hit@1 ≈ 0.22`:
+  for ~22% of queries the right chunk is in the top-5 but *not* ranked first.
+  That points at a **reranking** problem, not a chunking or retrieval-recall
+  problem — so a reranker (e.g. Cohere Rerank) is the highest-leverage next step
+  if the goal is to raise Hit@1.
+- **3 / 147 judge calls failed** to parse (unescaped backslashes from LaTeX-y
+  query text). The aggregate averages over the 144 successful judgements; the
+  failures are tolerated rather than chased.
 
 ---
 
+## Decisions & human-in-the-loop
 
-### ChromaDB Configuration
+The eval harness wasn't right on the first try. The choices below were made *after*
+observing the harness misbehave — which is the point of having one.
 
-ChromaDB automatically creates a persistent database in `./chroma_db/`. To reset:
+1. **Ingest the dataset's clean corpus text, not the PDFs.**
+   The first version downloaded each paper's PDF and ran it through PyPDF2. But
+   PyPDF2's extraction differs from the dataset's clean extraction, so the n-gram
+   comparison was comparing garbage against clean text and **median overlap
+   collapsed to ~0** — no gold chunks could be mapped. Switching to the dataset's
+   pre-extracted `corpus/<doc_id>.json` section text isolates the **chunker** as
+   the variable under test. (See the `load_ragbench.py` module docstring.)
 
-```bash
-rm -rf chroma_db/
-# Database will be recreated on next run
-```
+2. **Measure section-recall, not chunk-precision.**
+   The overlap metric was flipped from "fraction of the *chunk's* n-grams found in
+   the gold section" to "fraction of the *gold section's* n-grams captured by the
+   chunk." A short gold section fully contained in a 500-word chunk *should* score
+   1.0 — because the eval question is "does retrieving this chunk expose the
+   answer?", not "is the chunk pure."
 
-### Analytics Database
+3. **`spot_check.py` for human QA of the mapping.**
+   Before trusting the benchmark, `eval/spot_check.py` samples a few rows and
+   prints each query next to the chunks the mapping flagged as gold, so the
+   mapping quality can be eyeballed by a human rather than assumed.
 
-SQLite database stored in `analytics.db`. To reset:
+4. **Added `ingest_text()` to share one code path.**
+   So that eval ingests through the *same* chunker + embedder as production
+   (rather than a parallel path that could silently diverge from what users hit).
 
-```bash
-rm analytics.db
-# Database will be recreated on next run
-```
+5. **Cohere rate-limit retry.**
+   Ingesting 100+ papers hit Cohere's trial rate limits, so `generate_embeddings`
+   now retries on HTTP 429 (5 attempts, 65 s backoff) instead of crashing the run.
 
----
+### Harness-engineering notes
 
-## Troubleshooting
-
-### Common Issues
-
-
-#### 1. **Streamlit Login Not Redirecting**
-**Solution**: After login, manually click "Dashboard" or "Statistics" in the sidebar. This is expected behavior in Streamlit 1.29.0 (automatic redirect requires newer version).
-
-#### 2. **bcrypt/passlib Warning**
-```
-passlib/handlers/bcrypt.py:XXX: UserWarning: ...
-```
-**Solution**: This is harmless and suppressed. The system works correctly.
-
-#### 3. **Pandas Installation Issues (Python 3.13)**
-```bash
-# Solution: Install build dependencies first
-pip install --upgrade pip setuptools wheel
-pip install Cython>=3.0.0 numpy>=1.26.0
-pip install pandas>=2.2.0
-```
-
----
-
-### Key Concepts
-
-- **Embeddings**: Numerical vectors representing text meaning (768 dimensions)
-- **Chunking**: Splitting documents into manageable pieces (512 tokens)
-- **Semantic Search**: Finding similar meaning, not just keywords
-- **Context Window**: LLM receives query + relevant document chunks
+- **Reproducible:** deterministic seeded sampling, isolated `ragbench` collection,
+  every run stamped with git SHA + tag + config in `eval_runs`.
+- **Inspectable:** per-query results written to `eval/results/<timestamp>_<tag>.jsonl`
+  for drill-down.
+- **Cheap modes:** `--no-judge` for retrieval-only sweeps, `--limit N` for quick
+  iteration, `--top-k` to test ranking changes without re-ingesting.
+- **Graceful degradation:** judge parse failures are logged and skipped, not fatal.
 
 ---
 
-## Learning Resources
+## Security & guardrails
 
-### RAG Concepts
-- [Retrieval-Augmented Generation Explained](https://www.pinecone.io/learn/retrieval-augmented-generation/)
-- [Vector Databases Guide](https://www.pinecone.io/learn/vector-database/)
-
-### Technologies Used
-- [FastAPI Documentation](https://fastapi.tiangolo.com/)
-- [Streamlit Documentation](https://docs.streamlit.io/)
-- [ChromaDB Documentation](https://docs.trychroma.com/)
-- [Cohere API Documentation](https://docs.cohere.com/)
+`src/guardrails/safety.py` provides input/output checks for: prompt-injection
+attempts, jailbreak patterns, PII leakage, and oversized input (a basic DoS
+guard). The API uses JWT-based auth. These are baseline protections appropriate to
+a learning project — not a substitute for a real security review.
 
 ---
 
+## Credits
 
-
-## Acknowledgments
-
-- **Cohere** - For embeddings and LLM capabilities
-- **ChromaDB** - For vector database functionality
-- **FastAPI** - For the excellent web framework
-- **Streamlit** - For rapid dashboard development
-
----
-
-
+Built on [Cohere](https://docs.cohere.com/) (embeddings + LLM),
+[ChromaDB](https://docs.trychroma.com/), [FastAPI](https://fastapi.tiangolo.com/),
+and [Streamlit](https://docs.streamlit.io/). Benchmark derived from Vectara's
+[Open RAG Benchmark](https://huggingface.co/datasets/vectara/open_ragbench).

@@ -4,6 +4,13 @@
 Test analytics tracking with realistic data.
 """
 
+import os
+import sys
+
+# Allow running this script directly from the repo root (`python tests/test_analytics.py`)
+# by putting the project root on sys.path so `import src...` resolves.
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 from src.analytics.tracker import AnalyticsTracker
 import time
 

@@ -1,0 +1,106 @@
+Loaded 147 queries from eval/benchmark_ragbench.jsonl
+  [10/147] hit@1 so far = 0.200
+  [20/147] hit@1 so far = 0.250
+  [30/147] hit@1 so far = 0.333
+  [40/147] hit@1 so far = 0.375
+  ! judge failed: Invalid \escape: line 5 column 121 (char 164)
+  [50/147] hit@1 so far = 0.400
+  ! judge failed: Invalid \escape: line 5 column 87 (char 130)
+  [60/147] hit@1 so far = 0.433
+  [70/147] hit@1 so far = 0.457
+  [80/147] hit@1 so far = 0.438
+  [90/147] hit@1 so far = 0.456
+  [100/147] hit@1 so far = 0.460
+  [110/147] hit@1 so far = 0.473
+  ! judge failed: Invalid \escape: line 1 column 178 (char 177)
+  [120/147] hit@1 so far = 0.467
+  [130/147] hit@1 so far = 0.462
+  [140/147] hit@1 so far = 0.450
+  [147/147] hit@1 so far = 0.463
+
+============================================================
+Run #2  tag=ragbench-baseline  git=badf46c
+============================================================
+  hit_at_1                 = 0.4626
+  recall_at_5              = 0.6871
+  mrr                      = 0.5964
+  retrieval_latency_s      = 0.2133
+  gen_latency_s            = 2.1890
+  faithfulness             = 4.3061
+  correctness              = 4.2857
+  num_queries              = 147
+  wall_seconds             = 481.7700
+
+Per-query details: /Users/myid/Documents/Projects/IntelliRAGs/eval/results/20260527T015533_ragbench-baseline.jsonl
+Logged to analytics.db (eval_runs.id = 2)
+
+
+
+Explanation:
+Solid baseline. Honest verdict: this is a healthy starting point — well within the expected range, no red flags. Let me decode the numbers.
+
+What each number means
+
+┌───────────────┬─────────┬─────────────────────────────────────────────────────┐
+│    Metric     │  Value  │                   Interpretation                    │
+├───────────────┼─────────┼─────────────────────────────────────────────────────┤
+│               │         │ Top-1 retrieved chunk is gold 46% of the time.      │
+│ Hit@1         │ 0.463   │ Square in the "good" range I sketched. With your    │
+│               │         │ ~30% mapping noise, true Hit@1 is probably          │
+│               │         │ ~0.55–0.60.                                         │
+├───────────────┼─────────┼─────────────────────────────────────────────────────┤
+│ Recall@5      │ 0.687   │ Gold chunks appear in top-5 about 69% of the time.  │
+│               │         │ With mapping noise, true Recall@5 is likely ~0.80+. │
+├───────────────┼─────────┼─────────────────────────────────────────────────────┤
+│               │         │ Mean reciprocal rank ≈ 0.6 → 1/0.6 ≈ rank 1.7. So   │
+│ MRR           │ 0.596   │ when retrieval finds the gold chunk, it usually     │
+│               │         │ ranks it 1st or 2nd. That's a ranking-quality       │
+│               │         │ signal — your top results aren't noisy.             │
+├───────────────┼─────────┼─────────────────────────────────────────────────────┤
+│ Faithfulness  │ 4.31/5  │ded in the retrieved    │
+│               │         │ chunks. Hallucination is low.                       │
+├───────────────┼─────────┼────────────────────────┤
+│ Correctness   │ 4.29/5  │ Answers match the gold answers most of the time.    │
+├───────────────┼─────────┼────────────────────────┤
+│ Retrieval     │ 0.21s   │ Fast, no bottleneck.                                │
+│ latency       │         │                        │
+├───────────────┼─────────┼─────────────────────────────────────────────────────┤
+│ Gen latency   │ 2.19s   │                        │
+├───────────────┼─────────┼─────────────────────────────────────────────────────┤
+│               │ 482s (8 │timate — eval traffic   │
+│ Wall time     │  min)   │ is much lighter than ingest, so trial rate limits   │
+│               │         │                        │
+└───────────────┴─────────┴─────────────────────────────────────────────────────┘
+
+The most actionable signal: the ranking gap
+
+Recall@5 - Hit@1 = 0.687 - 0.463 ≈ 0.22
+
+This is a medium-sized gap. It tells you that for ~22% of queries, the right chunk
+is in your top-5 — but it'sreranking problem, not achunker problem. If your goal were to maximize Hit@1, the highest-impact fix would
+be a reranker (e.g., Coheren retriever and generator.
+
+The 3 judge failures (Inval
+
+These are JSON-parse errorsemit structured output andan unescaped backslash sneaks in (likely from a query containing LaTeX like \alpha
+or a path). 3 out of 147 ≈ rics still average over the144 successful judges. Not worth chasing now; if it gets worse later, the fix is a
+more lenient JSON parser in
+
+What to do next
+
+Two paths, in order of rele
+
+A. The cheap top-k=10 variaext step):
+python eval/run.py \
+    --tag ragbench-topk10 \
+    --benchmark eval/benchmark_ragbench.jsonl \
+    --collection ragbench \
+    --top-k 10 \
+    --notes "same corpus as
+This is useful as a sanity-check that your eval responds to a parameter change. Bit doesn't test the chunkerExpect Recall@5 and MRR tostay similar; the interesting question is whether faithfulness/correctness move  (more context → maybe bettetion).
+                                                                                 B. The actual chunker variato your goal):
+- Re-ingest with chunk_size=250 (smaller chunks, finer granularity) and re-run evwith tag ragbench-chunk250.
+- Re-ingest with chunk_size=1000 (bigger chunks, more context per retrieval) and re-run with tag ragbench-ch
+- Each re-ingest takes ~5–10 min; each eval ~8 min.                              
+My honest take: run A first (it's done in 8 minutes and confirms the eval frameworeacts sensibly to changes)se that's the question youwanted to answer in the first place. With the baseline at Hit@1=0.46, you have a real number to beat — and yrser chunks improve things.
+                                                                                    Want me to walk you throughIt's a tweak indocument_processor.py (or you can parameterize it via CLI if your chunk_text already accepts a chunk_size arg).

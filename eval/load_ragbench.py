@@ -5,19 +5,20 @@ Convert Vectara's Open RAG Benchmark (https://huggingface.co/datasets/vectara/op
 into an eval/benchmark.jsonl file that eval/run.py can consume.
 
 Pipeline:
-  1. Read queries.json / qrels.json / answers.json / pdf_urls.json from a
-     local clone of the dataset.
+  1. Read queries.json / qrels.json / answers.json from a local snapshot of the
+     dataset.
   2. Filter to text-only queries, deterministically sample N.
-  3. Download the unique PDFs the sample references (cached on disk).
-  4. Ingest those PDFs into a ChromaDB collection ('ragbench' by default)
-     through the same DocumentProcessor production uses.
-  5. Map each query's gold (doc_id, section_id) to a list of OUR chunk IDs
+  3. For each referenced paper, read the dataset's pre-extracted section text
+     from corpus/<doc_id>.json, concatenate sections into one stream, and feed
+     that stream through DocumentProcessor's chunker + embedder.
+  4. Map each query's gold (doc_id, section_id) to a list of OUR chunk IDs
      using n-gram overlap between the gold section text and each chunk.
-  6. Write eval/benchmark_ragbench.jsonl.
+  5. Write eval/benchmark_ragbench.jsonl.
 
-Prerequisite: clone the dataset first (requires git-lfs):
-    git lfs install
-    git clone https://huggingface.co/datasets/vectara/open_ragbench data/ragbench_raw
+Why corpus text instead of the PDFs: PyPDF2's extraction differs from the
+dataset's clean extraction, so the n-gram comparison sees garbage and median
+overlap collapses to ~0. Ingesting from corpus JSON isolates the chunker as
+the variable under test.
 
 Usage:
     python eval/load_ragbench.py --ragbench-dir data/ragbench_raw --n 150 --reset
@@ -27,8 +28,6 @@ import argparse
 import json
 import random
 import sys
-import time
-import urllib.request
 from pathlib import Path
 from typing import Dict, List, Optional, Set, Tuple
 
@@ -41,7 +40,6 @@ from ingestion.document_processor import DocumentProcessor  # noqa: E402
 
 
 COLLECTION_NAME = "ragbench"
-PDF_DIR = ROOT / "data" / "ragbench_pdfs"
 DEFAULT_OUT = ROOT / "eval" / "benchmark_ragbench.jsonl"
 
 
@@ -54,7 +52,7 @@ def load_metadata(ragbench_dir: Path) -> Dict:
             f"Couldn't find queries.json under {ragbench_dir}. "
             "Did `git clone` finish and were LFS pointers resolved?"
         )
-    names = ["queries", "qrels", "answers", "pdf_urls"]
+    names = ["queries", "qrels", "answers"]
     out: Dict = {}
     for n in names:
         path = base / f"{n}.json"
@@ -76,21 +74,28 @@ def sample_text_only(queries: Dict, qrels: Dict, n: int, seed: int) -> List[str]
     return candidates[:n]
 
 
-def download_pdf(paper_id: str, url: str, dest: Path) -> bool:
-    if dest.exists() and dest.stat().st_size > 0:
-        return True
+def load_doc_text(corpus_dir: Path, doc_id: str) -> Optional[str]:
+    """Read corpus/<doc_id>.json and concatenate all section texts into one stream.
+
+    Each section's text already begins with a Markdown header, so a blank-line
+    separator is enough to keep section boundaries readable. The chunker sees
+    this as a single document — matching how a real PDF would flow through.
+    """
+    p = corpus_dir / f"{doc_id}.json"
+    if not p.exists():
+        return None
     try:
-        req = urllib.request.Request(
-            url, headers={"User-Agent": "ragbench-eval/0.1 (research)"}
-        )
-        with urllib.request.urlopen(req, timeout=30) as resp, dest.open("wb") as f:
-            f.write(resp.read())
-        return True
-    except Exception as e:
-        print(f"  ! download failed for {paper_id}: {e}", file=sys.stderr)
-        if dest.exists():
-            dest.unlink()
-        return False
+        paper = json.loads(p.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return None
+    sections = paper.get("sections") or []
+    parts: List[str] = []
+    for s in sections:
+        if isinstance(s, dict):
+            t = (s.get("text") or "").strip()
+            if t:
+                parts.append(t)
+    return "\n\n".join(parts) if parts else None
 
 
 def word_ngrams(text: str, n: int) -> Set[str]:
@@ -101,11 +106,19 @@ def word_ngrams(text: str, n: int) -> Set[str]:
 
 
 def overlap_fraction(chunk_text: str, section_grams: Set[str], n: int) -> float:
-    """Fraction of the chunk's n-grams that also appear in the gold section."""
+    """Fraction of the gold section's n-grams captured by this chunk.
+
+    Section-recall, not chunk-precision: a short gold section fully contained in
+    a 500-word chunk should score 1.0, even though the chunk is mostly other
+    content. For RAG eval, the question is "does retrieving this chunk expose
+    the answer?" — which is what this metric measures.
+    """
+    if not section_grams:
+        return 0.0
     chunk_grams = word_ngrams(chunk_text, n)
     if not chunk_grams:
         return 0.0
-    return len(chunk_grams & section_grams) / len(chunk_grams)
+    return len(chunk_grams & section_grams) / len(section_grams)
 
 
 def get_section_text(corpus_dir: Path, doc_id: str, section_id) -> Optional[str]:
@@ -139,10 +152,9 @@ def main():
                     help="Min fraction of chunk n-grams in gold section to count as gold")
     ap.add_argument("--reset", action="store_true",
                     help="Drop the 'ragbench' ChromaDB collection before ingesting")
-    ap.add_argument("--skip-download", action="store_true",
-                    help="Skip PDF download (assume cached). Useful when iterating on mapping.")
     ap.add_argument("--skip-ingest", action="store_true",
-                    help="Skip ingestion (assume collection already populated).")
+                    help="Skip ingestion (assume collection already populated). "
+                         "Useful when iterating on mapping thresholds.")
     ap.add_argument("--out", default=str(DEFAULT_OUT))
     args = ap.parse_args()
 
@@ -160,40 +172,25 @@ def main():
     queries: Dict = meta["queries"]
     qrels: Dict = meta["qrels"]
     answers: Dict = meta["answers"]
-    pdf_urls: Dict = meta["pdf_urls"]
     corpus_dir: Path = meta["_corpus_dir"]
 
-    print(f"  queries={len(queries)}  qrels={len(qrels)}  answers={len(answers)}  "
-          f"pdf_urls={len(pdf_urls)}")
+    print(f"  queries={len(queries)}  qrels={len(qrels)}  answers={len(answers)}")
 
     selected_qids = sample_text_only(queries, qrels, args.n, args.seed)
     print(f"Sampled {len(selected_qids)} text-only queries (seed={args.seed})")
 
     needed_doc_ids = sorted({qrels[qid]["doc_id"] for qid in selected_qids})
-    print(f"They reference {len(needed_doc_ids)} unique PDFs")
+    print(f"They reference {len(needed_doc_ids)} unique papers")
 
-    # ── Download PDFs ──────────────────────────────────────
-    PDF_DIR.mkdir(parents=True, exist_ok=True)
-    downloaded: Dict[str, Path] = {}
-    if args.skip_download:
-        for doc_id in needed_doc_ids:
-            dest = PDF_DIR / f"{doc_id}.pdf"
-            if dest.exists() and dest.stat().st_size > 0:
-                downloaded[doc_id] = dest
-        print(f"Skip-download mode: {len(downloaded)} PDFs already cached")
-    else:
-        for i, doc_id in enumerate(needed_doc_ids, 1):
-            url = pdf_urls.get(doc_id)
-            if not url:
-                print(f"  [{i}/{len(needed_doc_ids)}] no URL for {doc_id}")
-                continue
-            dest = PDF_DIR / f"{doc_id}.pdf"
-            if download_pdf(doc_id, url, dest):
-                downloaded[doc_id] = dest
-                if i % 5 == 0 or i == len(needed_doc_ids):
-                    print(f"  [{i}/{len(needed_doc_ids)}] ok ({len(downloaded)} cached)")
-            time.sleep(0.4)
-        print(f"Downloaded {len(downloaded)} / {len(needed_doc_ids)} PDFs")
+    # ── Load corpus section text for each paper ────────────
+    doc_texts: Dict[str, str] = {}
+    for doc_id in needed_doc_ids:
+        txt = load_doc_text(corpus_dir, doc_id)
+        if txt:
+            doc_texts[doc_id] = txt
+        else:
+            print(f"  ! corpus json missing or empty for {doc_id}", file=sys.stderr)
+    print(f"Loaded section text for {len(doc_texts)} / {len(needed_doc_ids)} papers")
 
     # ── Reset collection if requested ──────────────────────
     client = chromadb.PersistentClient(path=str(ROOT / "chroma_db"))
@@ -204,18 +201,19 @@ def main():
         except Exception:
             pass
 
-    # ── Ingest PDFs ────────────────────────────────────────
+    # ── Ingest section text through the chunker + embedder ─
     if not args.skip_ingest:
         processor = DocumentProcessor(collection_name=COLLECTION_NAME)
         print(f"Ingesting into ChromaDB collection '{COLLECTION_NAME}'...")
-        for i, (doc_id, pdf_path) in enumerate(downloaded.items(), 1):
+        for i, (doc_id, text) in enumerate(doc_texts.items(), 1):
             try:
-                result = processor.ingest_document(
-                    str(pdf_path),
+                result = processor.ingest_text(
+                    text,
+                    source=f"corpus:{doc_id}",
                     metadata={"doc_id": doc_id, "ragbench": True},
                 )
-                if i % 5 == 0 or i == len(downloaded):
-                    print(f"  [{i}/{len(downloaded)}] {doc_id} → {result['chunks_created']} chunks")
+                if i % 5 == 0 or i == len(doc_texts):
+                    print(f"  [{i}/{len(doc_texts)}] {doc_id} → {result['chunks_created']} chunks")
             except Exception as e:
                 print(f"  ! ingest failed for {doc_id}: {e}", file=sys.stderr)
 
@@ -268,7 +266,7 @@ def main():
             "query": queries[qid]["query"],
             "gold_answer": answers.get(qid, ""),
             "gold_chunk_ids": gold_chunk_ids,
-            "source": str(PDF_DIR / f"{doc_id}.pdf"),
+            "source": f"corpus:{doc_id}",
             "synthesized": False,
             "doc_id": doc_id,
             "section_id": section_id,

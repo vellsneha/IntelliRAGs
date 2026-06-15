@@ -9,6 +9,13 @@ This script demonstrates the full pipeline:
 3. Get answers with sources
 """
 
+import os
+import sys
+
+# Allow running this script directly from the repo root (`python tests/test_rag.py`)
+# by putting the project root on sys.path so `import src...` resolves.
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 from src.ingestion.document_processor import DocumentProcessor
 from src.retrieval.retriever import Retriever
 

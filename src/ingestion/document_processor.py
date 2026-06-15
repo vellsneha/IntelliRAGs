@@ -16,6 +16,7 @@ Key Concepts:
 """
 
 import hashlib
+import time
 from pathlib import Path
 from typing import List, Dict, Optional, cast, Any
 import numpy as np
@@ -209,15 +210,29 @@ class DocumentProcessor:
             >>> print(len(embeddings[0]))
             1024  # Embedding dimension
         """
-        # Call Cohere's embedding API
-        response = self.co.embed(
-            texts=texts,
-            model='embed-english-v3.0',  # Cohere's English embedding model
-            input_type='search_document'  # Optimized for document storage
-        )
-        
-        # Return the embedding vectors
-        return response.embeddings
+        max_attempts = 5
+        for attempt in range(max_attempts):
+            try:
+                response = self.co.embed(
+                    texts=texts,
+                    model='embed-english-v3.0',
+                    input_type='search_document'
+                )
+                return response.embeddings
+            except Exception as e:
+                msg = str(e).lower()
+                is_rate_limit = "rate limit" in msg or "429" in msg
+                if is_rate_limit and attempt < max_attempts - 1:
+                    sleep_s = 65
+                    print(
+                        f"    Cohere rate limit hit; sleeping {sleep_s}s "
+                        f"(retry {attempt + 1}/{max_attempts - 1})",
+                        flush=True,
+                    )
+                    time.sleep(sleep_s)
+                    continue
+                raise
+        raise RuntimeError("unreachable")
     
     def ingest_document(self, file_path: str, metadata: Optional[Dict] = None) -> Dict:
         """
@@ -250,58 +265,45 @@ class DocumentProcessor:
             >>> print(result)
             {'doc_id': '5d41402...', 'chunks_created': 12, 'status': 'success'}
         """
-        # Step 1: Extract text from file
         text = self.extract_text(file_path)
-        
-        # Step 2: Split text into chunks
+        return self.ingest_text(text, source=file_path, metadata=metadata)
+
+    def ingest_text(self, text: str, source: str, metadata: Optional[Dict] = None) -> Dict:
+        """Ingest pre-extracted text directly, skipping file-based extraction.
+
+        Use this when text comes from a non-file source (a dataset's pre-cleaned
+        text, an API response, etc.) so the built-in PDF/DOCX extractor is bypassed.
+        Chunking, embedding, and storage are identical to ingest_document().
+        """
         chunks = self.chunk_text(text)
-        
-        # Step 3: Generate embeddings for all chunks
-        # We batch this operation for efficiency
         embeddings_list = self.generate_embeddings(chunks)
-        
-        # Convert embeddings to numpy array for ChromaDB compatibility
-        # ChromaDB accepts numpy arrays or lists of sequences
         embeddings = np.array(embeddings_list, dtype=np.float32)
-        
-        # Step 4: Create unique document ID using hash of file path
-        # MD5 hash creates a unique fingerprint for the file
-        doc_id = hashlib.md5(file_path.encode()).hexdigest()
-        
-        # Step 5: Prepare metadata
-        # Base metadata that all chunks share
+
+        doc_id = hashlib.md5(source.encode()).hexdigest()
+
         base_metadata = {
-            "source": file_path,
+            "source": source,
             "doc_id": doc_id,
-            "num_chunks": len(chunks)
+            "num_chunks": len(chunks),
         }
-        # Add any additional metadata provided by user
         if metadata:
             base_metadata.update(metadata)
-        
-        # Step 6: Create unique IDs for each chunk
-        # Format: {doc_id}_chunk_{chunk_number}
+
         ids = [f"{doc_id}_chunk_{i}" for i in range(len(chunks))]
-        
-        # Step 7: Create metadata list (one copy per chunk)
-        # .copy() creates a new dict to avoid shared references
         metadatas = [base_metadata.copy() for _ in chunks]
-        
-        # Step 8: Store everything in ChromaDB
-        # Type cast metadatas to satisfy ChromaDB type requirements
+
         from chromadb.types import Metadata
         self.collection.add(
-            embeddings=embeddings,  # The numerical vectors (numpy array)
-            documents=chunks,       # The actual text chunks
-            metadatas=cast(List[Metadata], metadatas),  # Metadata for each chunk
-            ids=ids                 # Unique identifiers
+            embeddings=embeddings,
+            documents=chunks,
+            metadatas=cast(List[Metadata], metadatas),
+            ids=ids,
         )
-        
-        # Step 9: Return success information
+
         return {
             "doc_id": doc_id,
             "chunks_created": len(chunks),
-            "status": "success"
+            "status": "success",
         }
 
 

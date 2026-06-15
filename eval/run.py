@@ -29,6 +29,7 @@ from dotenv import load_dotenv
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.append(str(ROOT / "src"))
+sys.path.append(str(ROOT))
 
 from analytics.tracker import AnalyticsTracker  # noqa: E402
 from retrieval.retriever import Retriever  # noqa: E402
