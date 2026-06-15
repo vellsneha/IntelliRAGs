@@ -38,3 +38,5 @@ dump_conversation.py
 .vscode/
 .idea/
 .DS_Store
+
+branch-diffs.txt
