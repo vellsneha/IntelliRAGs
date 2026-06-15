@@ -1,0 +1,42 @@
+# ── Python ────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+
+# ── Virtual environments ──────────────────────────────────
+venv/
+.venv/
+env/
+
+# ── Secrets (never commit; use .env.example as the template) ─
+.env
+
+# ── Generated data stores (recreated by ingestion / runtime) ─
+chroma_db/
+analytics.db
+rag_system.db
+
+# ── Datasets & runtime uploads (large / user-specific) ────
+data/uploads/
+data/ragbench_raw/
+data/ragbench_pdfs/
+
+# ── Test-generated scratch files (written into the repo root by
+#    the test scripts; not real fixtures) ─────────────────
+/sample.txt
+/health_benefits.txt
+/vacation_policy.txt
+/test_document.txt
+
+# ── Local notes / conversation dumps (not for sharing) ────
+claudeHelp.txt
+claude_conversation.txt
+dump_conversation.py
+
+# ── Editor / OS cruft ─────────────────────────────────────
+.vscode/
+.idea/
+.DS_Store
+
+branch-diffs.txt
